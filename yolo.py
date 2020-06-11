@@ -17,8 +17,9 @@ from matplotlib import pyplot as plt
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
-from keras.models import load_model, Model
+from keras.models import load_model
 import cv2
+from od_utils import *
 
 # %matplotlib inline
 print(tf.__version__)
@@ -28,324 +29,253 @@ print(tf.__version__)
 **1.1 - Filtering with a threshold on class scores**
 """
 
-def yolo_filter_boxes(box_confidence, boxes, box_class_probs, threshold = .6):
-  '''
-  Arguments:
-  box_confidence -- confidence of an object being present in the bounding box. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, 1)
-  boxes -- (b_x, b_y, b_h, b_w) coordinates of selected boxes. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, 4)
-  box_class_probs -- probabilities of classes of the object being detected. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, classes)
-  
-  Returns:
-  scores -- tensor of shape (None,), containing the class probability score for selected boxes
-  boxes -- tensor of shape (None, 4), containing (b_x, b_y, b_h, b_w) coordinates of selected boxes
-  classes -- tensor of shape (None,), containing the index of the class detected by the selected boxes
-  '''
-  # Compute box scores
-  box_scores = box_confidence * box_class_probs
-  # Find the box_classes using the max box_scores
-  box_classes = K.argmax(box_scores, axis=-1) 
-  box_class_scores = K.max(box_scores, axis=-1)
-  # Create a filtering mask based on "box_class_scores" by using "threshold"
-  filtering_mask = (box_class_scores >= threshold)
-  # Apply the mask to box_class_scores, boxes and box_classes
-  scores = tf.boolean_mask(box_class_scores, filtering_mask)
-  boxes = tf.boolean_mask(boxes, filtering_mask)
-  classes = tf.boolean_mask(box_classes, filtering_mask)
 
-  return scores, boxes, classes
+def yolo_filter_boxes(box_confidence, boxes, box_class_probs, threshold=.6):
+    '''
+    Arguments:
+    box_confidence -- confidence of an object being present in the bounding box. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, 1)
+    boxes -- (b_x, b_y, b_h, b_w) coordinates of selected boxes. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, 4)
+    box_class_probs -- probabilities of classes of the object being detected. one tensor of shape (n_row_cell, n_column_cell, n_anchor_boxes, classes)
+
+    Returns:
+    scores -- tensor of shape (None,), containing the class probability score for selected boxes
+    boxes -- tensor of shape (None, 4), containing (b_x, b_y, b_h, b_w) coordinates of selected boxes
+    classes -- tensor of shape (None,), containing the index of the class detected by the selected boxes
+    '''
+    # Compute box scores
+    box_scores = box_confidence * box_class_probs
+    # Find the box_classes using the max box_scores
+    box_classes = K.argmax(box_scores, axis=-1)
+    box_class_scores = K.max(box_scores, axis=-1)
+    # Create a filtering mask based on "box_class_scores" by using "threshold"
+    filtering_mask = (box_class_scores >= threshold)
+    # Apply the mask to box_class_scores, boxes and box_classes
+    scores = tf.boolean_mask(box_class_scores, filtering_mask)
+    boxes = tf.boolean_mask(boxes, filtering_mask)
+    classes = tf.boolean_mask(box_classes, filtering_mask)
+
+    return scores, boxes, classes
+
 
 """**1.2 - Non-max suppression**"""
 
+
 # YOLO non_max suppression
-def yolo_non_max_suppression(scores, boxes, classes, max_boxes, iou_threshold = .5):
-  '''
-  Arguments:
-  scores -- output of yolo_filter_boxes()
-  boxes -- output of yolo_filter_boxes()
-  classes -- output of yolo_filter_boxes()
-  max_boxes -- maximum number of predicted boxes you'd like
-  iou_threshold -- "intersection over union" threshold used for NMS filtering
-  Returns:
-  scores -- predicted score for each box
-  boxes -- predicted box for each box
-  classes -- predicted class for each box
-  '''
-  max_boxes_tensor = K.variable(max_boxes, dtype='int32')
-  K.get_session().run(tf.variables_initializer([max_boxes_tensor]))
+def yolo_non_max_suppression(scores, boxes, classes, max_boxes, iou_threshold=.5):
+    '''
+    Arguments:
+    scores -- output of yolo_filter_boxes()
+    boxes -- output of yolo_filter_boxes()
+    classes -- output of yolo_filter_boxes()
+    max_boxes -- maximum number of predicted boxes you'd like
+    iou_threshold -- "intersection over union" threshold used for NMS filtering
+    Returns:
+    scores -- predicted score for each box
+    boxes -- predicted box for each box
+    classes -- predicted class for each box
+    '''
+    max_boxes_tensor = K.variable(max_boxes, dtype='int32')
+    K.get_session().run(tf.variables_initializer([max_boxes_tensor]))
 
-  # get the list of indices corresponding to boxes you keep
-  nms_indices = tf.image.non_max_suppression(boxes, scores, max_boxes, iou_threshold)
-  # select only nms_indices from scores, boxes, classes
-  scores = K.gather(scores, nms_indices)
-  boxes = K.gather(boxes, nms_indices)
-  classes = K.gather(classes, nms_indices)
+    # get the list of indices corresponding to boxes you keep
+    nms_indices = tf.image.non_max_suppression(boxes, scores, max_boxes, iou_threshold)
+    # select only nms_indices from scores, boxes, classes
+    scores = K.gather(scores, nms_indices)
+    boxes = K.gather(boxes, nms_indices)
+    classes = K.gather(classes, nms_indices)
 
-  return scores, boxes, classes
+    return scores, boxes, classes
+
 
 """**extra exercise - "Intersection over Union"**"""
 
+
 # IoU
 def iou(box1, box2):
-  '''
-  box1 -- first box, list object with coordinates (box1_x1, box1_y1, box1_x2, box_1_y2)
-  box2 -- second box, list object with coordinates (box2_x1, box2_y1, box2_x2, box2_y2)
-  '''
-  # Assign variable names to coordinates for clarity
-  (box1_x1, box1_y1, box1_x2, box1_y2) = box1
-  (box2_x1, box2_y1, box2_x2, box2_y2) = box2
-  # Calculate the (yi1, xi1, yi2, xi2) coordinates of the intersection of box1 and box2. Calculate its Area.
-  xi1 = max(box1_x1, box2_x1)
-  yi1 = max(box1_y1, box2_y1)
-  xi2 = min(box1_x2, box2_x2)
-  yi2 = min(box1_y2, box2_y2)
-  inter_width = xi2 - xi1
-  inter_height = yi2 - yi1
-  inter_area = max(inter_height, 0) * max(inter_width, 0)
-  # Union(A,B) = A + B - Inter(A,B)
-  box1_area = (box1_x2-box1_x1)*(box1_y2-box1_y1)
-  box2_area = (box2_x2-box2_x1)*(box2_y2-box2_y1)
-  union_area = box1_area + box2_area - inter_area
-  # Compute the IoU
-  iou = inter_area / union_area
+    '''
+    box1 -- first box, list object with coordinates (box1_x1, box1_y1, box1_x2, box_1_y2)
+    box2 -- second box, list object with coordinates (box2_x1, box2_y1, box2_x2, box2_y2)
+    '''
+    # Assign variable names to coordinates for clarity
+    (box1_x1, box1_y1, box1_x2, box1_y2) = box1
+    (box2_x1, box2_y1, box2_x2, box2_y2) = box2
+    # Calculate the (yi1, xi1, yi2, xi2) coordinates of the intersection of box1 and box2. Calculate its Area.
+    xi1 = max(box1_x1, box2_x1)
+    yi1 = max(box1_y1, box2_y1)
+    xi2 = min(box1_x2, box2_x2)
+    yi2 = min(box1_y2, box2_y2)
+    inter_width = xi2 - xi1
+    inter_height = yi2 - yi1
+    inter_area = max(inter_height, 0) * max(inter_width, 0)
+    # Union(A,B) = A + B - Inter(A,B)
+    box1_area = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
+    box2_area = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
+    union_area = box1_area + box2_area - inter_area
+    # Compute the IoU
+    iou = inter_area / union_area
 
-  return iou
+    return iou
+
 
 """**1.3 - Filtering through all boxes using above functions**"""
 
-#@ useful utils
+
+# @ useful utils
 # Convert YOLO box predictions to bounding box corners
 def yolo_boxes_to_corners(box_xy, box_wh):
-  box_mins = box_xy - (box_wh / 2.)
-  box_maxes = box_xy + (box_wh / 2.)
+    box_mins = box_xy - (box_wh / 2.)
+    box_maxes = box_xy + (box_wh / 2.)
 
-  return K.concatenate([
+    return K.concatenate([
         box_mins[..., 1:2],  # y_min
         box_mins[..., 0:1],  # x_min
         box_maxes[..., 1:2],  # y_max
         box_maxes[..., 0:1]  # x_max
     ])
+
+
 # Scale the predicted boxes in order to be drawable on the image
 def scale_boxes(boxes, image_shape):
-  height = image_shape[0]
-  width = image_shape[1]
-  image_dims = K.stack([height, width, height, width])
-  image_dims = K.reshape(image_dims, [1, 4])
-  boxes = boxes * image_dims
-  
-  return boxes
+    height = image_shape[0]
+    width = image_shape[1]
+    image_dims = K.stack([height, width, height, width])
+    image_dims = K.reshape(image_dims, [1, 4])
+    boxes = boxes * image_dims
+
+    return boxes
+
 
 # Take the output of the YOLO encoding and filters through all boxes using score threshold and NMS
-def yolo_eval(yolo_outputs, image_shape=(720., 1280.), max_boxes = 10, score_threshold=.6, iou_threshold=.5):
-  '''
-  Arguments:
-  yolo_outputs -- contains 4 tensors:
-                  box_confidence -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 1)
-                  box_xy -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 2)
-                  box_wh -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 2)
-                  box_class_probs -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, classes)
-  Returns:
-  scores -- predicted score for each box
-  boxes -- predicted box for each box
-  classes -- predicted class for each box
-  '''
-  # Retrieve outputs of the YOLO model
-  box_confidence, box_xy, box_wh, box_class_probs = yolo_outputs
-  # Convert boxes to be ready for filtering functions
-  ''' convert yolo box predictions to bounding box corners ''' #@boxes = yolo_boxes_to_corners(box_xy, box_wh)
-  box_mins = box_xy - (box_wh / 2.)
-  box_maxes = box_xy + (box_wh / 2.)
-  boxes = K.concatenate([
+def yolo_eval(yolo_outputs, image_shape, score_threshold=.6, iou_threshold=.5, max_boxes=10):
+    '''
+    Arguments:
+    yolo_outputs -- contains 4 tensors:
+                    box_confidence -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 1)
+                    box_xy -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 2)
+                    box_wh -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, 2)
+                    box_class_probs -- (n_sample, n_row_cell, n_column_cell, n_anchor_boxes, classes)
+    Returns:
+    scores -- predicted score for each box
+    boxes -- predicted box for each box
+    classes -- predicted class for each box
+    '''
+    # Retrieve outputs of the YOLO model
+    box_confidence, box_xy, box_wh, box_class_probs = yolo_outputs
+    # Convert boxes to be ready for filtering functions
+    ''' convert yolo box predictions to bounding box corners '''
+    boxes = yolo_boxes_to_corners(box_xy, box_wh)
+    '''
+    box_mins = box_xy - (box_wh / 2.)
+    box_maxes = box_xy + (box_wh / 2.)
+    boxes = K.concatenate([
         box_mins[..., 1:2],  # y_min
         box_mins[..., 0:1],  # x_min
         box_maxes[..., 1:2],  # y_max
         box_maxes[..., 0:1]  # x_max
-    ]) # the order is corresponding to tf.image.non_max_suppression(...)
-  # Perform score-fitering with a threshold of score_threshold
-  scores, boxes, classes = yolo_filter_boxes(box_confidence, boxes, box_class_probs, score_threshold)
-  # scale boxes back to original image shape 
-  ''' scale x,y,w,h back to original image size. i.e. x(0.2) back to x(0.2*1280 = 256) ''' #@boxes = scale_boxes(boxes, image_shape)
-  height = image_shape[0]
-  width = image_shape[1]
-  image_dims = K.stack([height, width, height, width])
-  image_dims = K.reshape(image_dims, [1, 4])
-  boxes = boxes * image_dims
-  # Perform Non-max suppression
-  scores, boxes, classes = yolo_non_max_suppression(scores, boxes, classes, max_boxes, iou_threshold)
+    ])  # the order is corresponding to tf.image.non_max_suppression(...)
+    '''
+    # Perform score-fitering with a threshold of score_threshold
+    scores, boxes, classes = yolo_filter_boxes(box_confidence, boxes, box_class_probs, score_threshold)
+    # scale boxes back to original image shape
+    ''' scale x,y,w,h back to original image size. i.e. x(0.2) back to x(0.2*1280 = 256) '''
+    boxes = scale_boxes(boxes, image_shape)
+    '''
+    height = image_shape[0]
+    width = image_shape[1]
+    image_dims = K.stack([height, width, height, width])
+    image_dims = K.reshape(image_dims, [1, 4])
+    boxes = boxes * image_dims
+    '''
+    # Perform Non-max suppression
+    scores, boxes, classes = yolo_non_max_suppression(scores, boxes, classes, max_boxes, iou_threshold)
 
-  return scores, boxes, classes
+    return scores, boxes, classes
+
 
 """# **2 - Test YOLO pre-trained model on images**
 
-**1.1 - Defining path**
+**2.1 - Defining path**
 """
 
-#from google.colab import drive
-#drive.mount('/content/drive')
-#path = '/content/drive/My Drive/DL/object_detection/car_detection_yolo'
-#os.listdir(path)
+# from google.colab import drive
+# drive.mount('/content/drive')
+# path = '/content/drive/My Drive/DL/object_detection/car_detection_yolo'
+# os.listdir(path)
 
-"""**1.2 - Defining classes, anchors and image shape**"""
+"""**2.2 - Defining classes, anchors and image shape**"""
 
-#@ useful utils
-# read classes names
-def read_classes(classes_path):
-  with open(classes_path) as f:
-    class_names = f.readlines()
-  class_names = [c.strip() for c in class_names]
-  return class_names
-# read anchors names
-def read_anchors(anchors_path):
-  with open(anchors_path) as f:
-    anchors = f.readline()
-    anchors = [float(x) for x in anchors.split(',')]
-    anchors = np.array(anchors).reshape(-1, 2)
-  return anchors
+"""**2.3 - Run the graph on an image**"""
 
-# Test YOLO pre-trained model on images
-class_names = read_classes("model_data/coco_classes.txt")
-anchors = read_anchors("model_data/yolo_anchors.txt")
-image_shape=(720., 1280.)
+# @ import libraries
+import imageio
+from PIL import Image
 
-"""**1.3 - Loading a pre-trained model**"""
+image_shape = (720., 1280.)
 
 # Load a pre-trained model
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-yolo_model = load_model("model_data/yolo.h5")
-#yolo_model.summary()
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = '3'
+yolo_model = load_model('model_data/yolo.h5')
 
-"""**1.4 - Convert output of the model to usable bounding box tensors**"""
+class_names = read_classes("model_data/coco_classes.txt")
+anchors = read_anchors("model_data/yolo_anchors.txt")
 
-# Convert output of the model to usable bounding box tensors -- model.output (n_sample, n_row_cell, n_column_cell, n_anchors*(5+classes)) to yolo_outputs (4 tensors mentioned above)
-def yolo_head(feats, anchors, num_classes):
-  num_anchors = len(anchors)
-  # Reshape to batch, height, width, num_anchors, box_params
-  anchors_tensor = K.reshape(K.variable(anchors), [1, 1, 1, num_anchors, 2])
-  # Dynamic implementation of conv dims for fully convolutional model
-  conv_dims = K.shape(feats)[1:3]
-  # In YOLO the height index is the inner most iteration
-  conv_height_index = K.arange(0, stop=conv_dims[0])
-  conv_width_index = K.arange(0, stop=conv_dims[1])
-  conv_height_index = K.tile(conv_height_index, [conv_dims[1]])
-  conv_width_index = K.tile(K.expand_dims(conv_width_index, 0), [conv_dims[0], 1])
-  conv_width_index = K.flatten(K.transpose(conv_width_index))
-  conv_index = K.transpose(K.stack([conv_height_index, conv_width_index]))
-  conv_index = K.reshape(conv_index, [1, conv_dims[0], conv_dims[1], 1, 2])
-  conv_index = K.cast(conv_index, K.dtype(feats))
-
-  feats = K.reshape(feats, [-1, conv_dims[0], conv_dims[1], num_anchors, num_classes + 5])
-  conv_dims = K.cast(K.reshape(conv_dims, [1, 1, 1, 1, 2]), K.dtype(feats))
-
-  box_confidence = K.sigmoid(feats[..., 4:5])
-  box_xy = K.sigmoid(feats[..., :2])
-  box_wh = K.exp(feats[..., 2:4])
-  box_class_probs = K.softmax(feats[..., 5:])
-
-  # Adjust preditions to each spatial grid point and anchor size.
-  # Note: YOLO iterates over height index before width index.
-  box_xy = (box_xy + conv_index) / conv_dims
-  box_wh = box_wh * anchors_tensor / conv_dims
-
-  return box_confidence, box_xy, box_wh, box_class_probs
-
+# Convert output of the model to usable bounding box tensors
 yolo_outputs = yolo_head(yolo_model.output, anchors, len(class_names))
 
-"""**2.5 - Filtering boxes**"""
-
 # Filtering boxes
-scores, boxes, classes = yolo_eval(yolo_outputs, image_shape=(720., 1280.))
+scores, boxes, classes = yolo_eval(yolo_outputs, image_shape)
 
-"""**2.6 - Run the graph on an image**"""
-
-#@ useful utils
-import imghdr
-import colorsys
-import random
-import imageio
-from PIL import Image, ImageFont, ImageDraw
-
-def preprocess_image(img_path, model_image_size):
-  image_type = imghdr.what(img_path)
-  image = Image.open(img_path)
-  resized_image = image.resize(tuple(reversed(model_image_size)), Image.BICUBIC)
-  image_data = np.array(resized_image, dtype='float32')
-  image_data /= 255.
-  image_data = np.expand_dims(image_data, 0)
-  return image, image_data
-
-def generate_colors(class_names):
-  hsv_tuples = [(x / len(class_names), 1., 1.) for x in range(len(class_names))]
-  colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
-  colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), colors))
-  random.seed(10101)
-  random.shuffle(colors)
-  random.seed(None)
-  return colors
-
-def draw_boxes(image, out_scores, out_boxes, out_classes, class_names, colors):
-    
-    font = ImageFont.truetype(font='font/FiraMono-Medium.otf',size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
-    thickness = (image.size[0] + image.size[1]) // 300
-
-    for i, c in reversed(list(enumerate(out_classes))):
-        predicted_class = class_names[c]
-        box = out_boxes[i]
-        score = out_scores[i]
-
-        label = '{} {:.2f}'.format(predicted_class, score)
-
-        draw = ImageDraw.Draw(image)
-        label_size = draw.textsize(label, font)
-
-        top, left, bottom, right = box
-        top = max(0, np.floor(top + 0.5).astype('int32'))
-        left = max(0, np.floor(left + 0.5).astype('int32'))
-        bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-        right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-        print(label, (left, top), (right, bottom))
-
-        if top - label_size[1] >= 0:
-            text_origin = np.array([left, top - label_size[1]])
-        else:
-            text_origin = np.array([left, top + 1])
-
-        # My kingdom for a good redistributable image drawing library.
-        for i in range(thickness):
-            draw.rectangle([left + i, top + i, right - i, bottom - i], outline=colors[c])
-        draw.rectangle([tuple(text_origin), tuple(text_origin + label_size)], fill=colors[c])
-        draw.text(text_origin, label, fill=(0, 0, 0), font=font)
-        del draw
-
-sess = K.get_session()
 # Run the graph on an image
-def predict(sess, image_file):
-  # Preprocess image
-  image, image_data = preprocess_image("images/"+image_file, model_image_size=(608, 608))
-  # Run the session
-  out_scores, out_boxes, out_classes = sess.run(fetches=[scores, boxes, classes], feed_dict={yolo_model.input: image_data, K.learning_phase():0})
+sess = K.get_session()
 
-  # Print predictions info
-  print('Found {} boxes for {}'.format(len(out_boxes), image_file))
-  # Generate colors for drawing bounding boxes
-  colors = generate_colors(class_names)
-  # Draw bounding boxes on the image file
-  image = image.resize(tuple(map(int, reversed(image_shape))), Image.BICUBIC)
-  draw_boxes(image, out_scores, out_boxes, out_classes, class_names, colors)
-  # Save the predicted bounding box on the image
-  image.save(os.path.join("out", image_file), quality=90)
-  # Display the results in the notebook
-  output_image = imageio.imread(os.path.join("out", image_file))
-  imshow(output_image)
-  plt.show()
 
-  return out_scores, out_boxes, out_classes
+def predict(sess, args):
+    # model_path, image, score_threshold, iou_threshold
+    image_file = args['image']
+    score_threshold = args['confidence']
+    iou_threshold = args['threshold']
+
+    # Preprocess image
+    image, image_data, orig_img_size = preprocess_image("images/" + image_file, model_image_size=(608, 608))
+
+    # Filtering boxes
+    scores, boxes, classes = yolo_eval(yolo_outputs, orig_img_size, score_threshold, iou_threshold)
+
+    # Run the session
+    out_scores, out_boxes, out_classes = sess.run(fetches=[scores, boxes, classes],
+                                                  feed_dict={yolo_model.input: image_data, K.learning_phase(): 0})
+
+    # Print predictions info
+    print('Found {} boxes for {}'.format(len(out_boxes), image_file))
+    # Generate colors for drawing bounding boxes
+    colors = generate_colors(class_names)
+    # Draw bounding boxes on the image file
+    image = image.resize(tuple(map(int, reversed(orig_img_size))), Image.BICUBIC)
+    draw_boxes(image, out_scores, out_boxes, out_classes, class_names, colors)
+    # Save the predicted bounding box on the image
+    image.save(os.path.join("out", image_file), quality=90)
+    # Display the results in the notebook
+    output_image = imageio.imread(os.path.join("out", image_file))
+    imshow(output_image)
+    plt.show()
+
+    return out_scores, out_boxes, out_classes
+
 
 # Run the graph on the frame from the video stream
-def video_predict(sess, image):
+def video_predict(sess, image, args):
+    # output, model_path, score_threshold, iou_threshold
+    score_threshold = args['confidence']
+    iou_threshold = args['threshold']
+
     # Preprocess image
-    # image, image_data = preprocess_image(path + "/images/" + image_file, model_image_size=(608, 608))
-    image_data = np.array(image, dtype='float32')
+    image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))  # convert opencv to Image format
+    # orig_img_size = tuple(map(float, reversed(image.size)))
+    resized_image = image.resize(tuple(reversed((608, 608))), Image.BICUBIC)
+    image_data = np.array(resized_image, dtype='float32')
     image_data /= 255.
     image_data = np.expand_dims(image_data, 0)
+
     # Run the session
     out_scores, out_boxes, out_classes = sess.run(fetches=[scores, boxes, classes],
                                                   feed_dict={yolo_model.input: image_data,
@@ -354,10 +284,8 @@ def video_predict(sess, image):
     # Generate colors for drawing bounding boxes
     colors = generate_colors(class_names)
     # Draw bounding boxes on the image file
-    image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     image = image.resize(tuple(map(int, reversed(image_shape))), Image.BICUBIC)
     draw_boxes(image, out_scores, out_boxes, out_classes, class_names, colors)
     img = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
 
     return img
-

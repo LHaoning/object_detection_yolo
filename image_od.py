@@ -9,14 +9,20 @@ Original file is located at
 # **Import libraries**
 """
 
-from keras import backend as K
+import argparse
 from yolo import predict
+from od_utils import *
 
-"""**Defining image path**"""
+"""**construct the argument parse and parse the arguments**"""
 
-image_file = 'test_001.jpg'
+ap = argparse.ArgumentParser()
+ap.add_argument("-i", "--image", required=True, help='input image')
+#ap.add_argument('-y', '--yolo', required=True, help='base path to YOLO model')
+ap.add_argument('-c', '--confidence', type=float, default=0.6, help='minimum prob. to filter weak detections')
+ap.add_argument('-t', '--threshold', type=float, default=0.5, help='threshold when applying non-maxima suppression')
+args = vars(ap.parse_args())
 
 """**Run the graph on an image**"""
 
 sess = K.get_session()
-out_scores, out_boxes, out_classes = predict(sess, image_file)
+out_scores, out_boxes, out_classes = predict(sess, args)

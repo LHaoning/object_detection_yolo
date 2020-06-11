@@ -9,34 +9,52 @@ Original file is located at
 # **Import libraries**
 """
 
+import argparse
 import cv2
 import time
 from keras import backend as K
 from yolo import video_predict
 
+"""**construct the argument parse and parse the arguments**"""
+
+ap = argparse.ArgumentParser()
+ap.add_argument('-i', '--input', required=True, help='path to input video')
+ap.add_argument('-o', '--output', required=True, help='path to output video')
+# ap.add_argument('-y', '--yolo', required=True, help='base path to YOLO model')
+ap.add_argument('-c', '--confidence', type=float, default=.6, help='minimum prob. to filter weak detections')
+ap.add_argument('-t', '--threshold', type=float, default=.5, help='non-max supression threshold')
+args = vars(ap.parse_args())
+
 """**Initialize the video stream**"""
 
 cap = cv2.VideoCapture(0)
 time.sleep(2)
-
+writer = None
 """**Loop over the frames from the video stream**"""
 
-model_image_size = (608, 608)
 while True:
-  # grab the frame from the video stream and reshape image size
-  ret, img = cap.read()
-  img = cv2.resize(img, model_image_size)
-  
-  # Run the graph on the frame from the video stream
-  sess = K.get_session()
-  img = video_predict(sess, img)
-  cv2.imshow('od', img)
+    # grab the frame from the video stream and reshape image size
+    ret, img = cap.read()
 
-  key = cv2.waitKey(10)
-  if key == 27:
-      break
+    # Run the graph on the frame from the video stream
+    sess = K.get_session()
+    img = video_predict(sess, img, args)
+    cv2.imshow('od', img)
+
+    # check if the video writer is None
+    if writer is None:
+        # initialize our video writer
+        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+        writer = cv2.VideoWriter('out_videos/' + args['output'], fourcc, 30,
+                                 (img.shape[1], img.shape[0]), True)
+    writer.write(img)
+
+    key = cv2.waitKey(10)
+    if key == 27:
+        break
 
 """**Release the video stream**"""
 
 cv2.destroyAllWindows()
-cv2.VideoCapture(0).release()
+writer.release()
+cap.release()
